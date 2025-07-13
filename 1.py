@@ -83,14 +83,14 @@ def clean_html_and_extract_readings(html_str):
             break
 
     # Remove initial b/br elements
-    for element in soup.find_all(recursive=False):
-        if element.name in ["b", "br"]:
-            content = element.get_text().strip()
-            if len(content) == 1 and content in "IVX":
-                break
-            element.decompose()
-        else:
-            break
+    # for element in soup.find_all(recursive=False):
+    #     if element.name in ["b", "br"]:
+    #         content = element.get_text().strip()
+    #         if len(content) == 1 and content in "IVX":
+    #             break
+    #         element.decompose()
+    #     else:
+    #         break
 
     return str(soup), readings
 
