@@ -25,8 +25,8 @@ ACCENT_MAP = {
 
 
 def has_accented_vowels(text):
-    """Check if text contains any accented vowels from our ACCENT_MAP"""
-    return any(accent in text for accent in ACCENT_MAP.values())
+    """Check if text contains any stress markers (acute accents or ё)"""
+    return any(accent in text for accent in ACCENT_MAP.values()) or "ё" in text.lower()
 
 
 def should_use_reading(text, reading_candidate):
@@ -81,6 +81,15 @@ def clean_html_and_extract_readings(html_str):
             readings.append(process_b_tag(element))
         elif element.name != "br":  # Stop at first non-br element
             break
+
+    if not readings:
+        first_green_font = soup.find("font", color="green")
+        if first_green_font:
+            text = first_green_font.get_text().strip()
+            if text.startswith("(") and text.endswith(")"):
+                reading = text[1:-1].strip()  # Remove parentheses
+                if "ё" in reading.lower():  # Treat ё as implicit stress
+                    readings.append(reading)
 
     # Remove initial b/br elements
     # for element in soup.find_all(recursive=False):
@@ -250,6 +259,9 @@ def convert_to_yomitan(input_lines):
                 )
             else:
                 reading = headword
+
+            if "ё" in reading:
+                headword = reading
 
             entry = [
                 headword,  # Term
