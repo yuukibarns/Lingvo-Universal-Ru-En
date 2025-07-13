@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Lingvo Universal (x6) (Ru-En)",
+  "revision": "10.8.202111232201",
+  "author": "ramix",
+  "url": "https://dic.1963.ru/560",
+  "description": "Lingvo Universal Russian-English dictionary",
+  "sourceLanguage": "ru",
+  "targetLanguage": "en",
+  "format": 3,
+  "isUpdatable": true,
+  "indexUrl": "https://dic.1963.ru/560",
+  "downloadUrl": "https://dic.1963.ru/560"
+}
