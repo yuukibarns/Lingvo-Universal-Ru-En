@@ -24,6 +24,27 @@ ACCENT_MAP = {
 }
 
 
+def has_accented_vowels(text):
+    """Check if text contains any accented vowels from our ACCENT_MAP"""
+    return any(accent in text for accent in ACCENT_MAP.values())
+
+
+def should_use_reading(text, reading_candidate):
+    """Determine whether to use the reading candidate"""
+    # Count the number of vowels in the headword
+    vowels_in_headword = sum(1 for char in text if char.lower() in "аеёиоуыэюя")
+
+    # Rule 1: Always empty if no acute vowels
+    if not has_accented_vowels(reading_candidate):
+        return False
+
+    # Rule 2: Empty if headword has only one vowel (stress is unambiguous)
+    if vowels_in_headword <= 1:
+        return False
+
+    return True
+
+
 def process_b_tag(b_tag):
     """Extract text from <b> tag and replace accented vowels"""
     text = ""
@@ -54,6 +75,9 @@ def clean_html_and_extract_readings(html_str):
     readings = []
     for element in soup.find_all(recursive=False):
         if element.name == "b":
+            content = element.get_text().strip()
+            if len(content) == 1 and content in "IVX":
+                break
             readings.append(process_b_tag(element))
         elif element.name != "br":  # Stop at first non-br element
             break
@@ -61,6 +85,9 @@ def clean_html_and_extract_readings(html_str):
     # Remove initial b/br elements
     for element in soup.find_all(recursive=False):
         if element.name in ["b", "br"]:
+            content = element.get_text().strip()
+            if len(content) == 1 and content in "IVX":
+                break
             element.decompose()
         else:
             break
@@ -213,9 +240,14 @@ def convert_to_yomitan(input_lines):
         for headword in headwords:
             # Determine reading: phrases keep original, words use extracted reading
             if " " in headword:
-                reading = headword
+                reading = ""
             elif readings_list:
-                reading = readings_list.pop(0)
+                reading_candidate = readings_list.pop(0)
+                reading = (
+                    reading_candidate
+                    if should_use_reading(headword, reading_candidate)
+                    else headword
+                )
             else:
                 reading = headword
 
