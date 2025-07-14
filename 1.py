@@ -1,6 +1,7 @@
 import json
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+import re
 
 ACCENT_MAP = {
     "а": "а́",
@@ -78,18 +79,34 @@ def clean_html_and_extract_readings(html_str):
             content = element.get_text().strip()
             if len(content) == 1 and content in "IVX":
                 break
+            has_accent = bool(element.find("u", class_="accent"))
+            if not has_accent:
+                break
             readings.append(process_b_tag(element))
         elif element.name != "br":  # Stop at first non-br element
             break
 
     if not readings:
-        first_green_font = soup.find("font", color="green")
-        if first_green_font:
-            text = first_green_font.get_text().strip()
+        # Get the first top-level block (e.g., <p>, <div>, etc.)
+        first_block = next(
+            (child for child in soup.children if child.name is not None), None
+        )
+
+        # Check if the first block is a <font> tag with color="green"
+        if (
+            first_block
+            and first_block.name == "font"
+            and first_block.get("color", "").lower() == "green"
+        ):
+            text = first_block.get_text().strip()
             if text.startswith("(") and text.endswith(")"):
-                reading = text[1:-1].strip()  # Remove parentheses
-                if "ё" in reading.lower():  # Treat ё as implicit stress
-                    readings.append(reading)
+                first_paren = text[text.find("(") + 1 : text.find(")")].strip()
+                if "ё" in first_paren:
+                    if "/" in first_paren:
+                        for reading in first_paren.split("/"):
+                            readings.append(reading)
+                    else:
+                        readings.append(first_paren)
 
     # Remove initial b/br elements
     # for element in soup.find_all(recursive=False):
@@ -223,20 +240,40 @@ def convert_html_to_content(html_str):
     return process_node(root)
 
 
-def convert_to_yomitan(input_lines):
+# Normalize both strings for comparison
+def normalize(s):
+    return (
+        s.replace("ё", "е")
+        .replace("\u0301", "")
+        .replace("-", "")
+        .replace(" ", "")
+        .lower()
+    )
+
+
+def convert_to_yomitan(input_lines, debug):
     """Convert Lingvo Ru-En dictionary to Yomitan JSON format"""
     entries = []
     non_empty_lines = [line for line in input_lines if line.strip()]
     sequence = 0
+    reading_or_link_num = 0
+    phrases_num = 0
 
     for line in tqdm(non_empty_lines, desc="Processing entries", unit="entry"):
+        line_copy = line
         # Find the position of the first "<" to separate headword and HTML
         first_lt = line.find("<")
         if first_lt == -1:
             continue  # Skip if no HTML found
 
+        # Hardcoded exception as revision
+        exceptions = ["незарифленный", "обдернуться", "обмерзать"]
+
         headword_str = line[:first_lt].strip()
         html_str = line[first_lt:].strip()
+
+        if headword_str in exceptions:
+            continue
 
         # Split multiple headwords separated by pipes
         headwords = [h.strip() for h in headword_str.split("|")]
@@ -245,46 +282,158 @@ def convert_to_yomitan(input_lines):
         cleaned_html, readings_list = clean_html_and_extract_readings(html_str)
         structured_content = convert_html_to_content(cleaned_html)
 
+        is_phrase = False
+
+        for headword in headwords:
+            if " " in headword:
+                is_phrase = True
+                break
+
+        if not is_phrase:
+            if not readings_list and "bword" in cleaned_html:
+                reading_or_link_num += 1
+            else:
+                reading_or_link_num += len(readings_list)
+
         # Create entries for each headword
         for headword in headwords:
             # Determine reading: phrases keep original, words use extracted reading
+            # Sometimes phrase has reading: Али Баба
             if " " in headword:
-                reading = ""
-            elif readings_list:
-                reading_candidate = readings_list.pop(0)
-                reading = (
-                    reading_candidate
-                    if should_use_reading(headword, reading_candidate)
-                    else headword
-                )
+                phrases_num += 1
+            reading = ""
+            if readings_list:
+                reading_candidate = readings_list[0]
+                if "(" in reading_candidate and ")" in reading_candidate:
+                    # Variant 1: With parenthetical content (remove parentheses but keep content)
+                    variant1 = re.sub(r"\(([^)]*)\)", r"\1", reading_candidate)
+
+                    # Variant 2: Without parenthetical content (remove parentheses and their content)
+                    variant2 = re.sub(r"\([^)]*\)", "", reading_candidate)
+
+                    # Clean up whitespace and return non-empty variants
+                    variants = [" ".join(variant1.split()), " ".join(variant2.split())]
+
+                    for variant in variants:
+                        norm_reading = normalize(variant)
+                        norm_headword = normalize(headword)
+
+                        if norm_reading == norm_headword:
+                            _ = readings_list.pop(0)
+                            reading = (
+                                variant
+                                if should_use_reading(headword, variant)
+                                else headword
+                            )
+                else:
+                    norm_reading = normalize(reading_candidate)
+                    norm_headword = normalize(headword)
+                    reading_space_num = reading_candidate.count(" ")
+                    headword_space_num = headword.count(" ")
+                    if (
+                        norm_reading != norm_headword
+                        or reading_space_num != headword_space_num
+                    ):
+                        reading = headword
+                    else:
+                        reading_candidate = readings_list.pop(0)
+                        reading = (
+                            reading_candidate
+                            if should_use_reading(headword, reading_candidate)
+                            else headword
+                        )
             else:
                 reading = headword
 
-            if "ё" in reading:
-                headword = reading
+            try:
+                reading_space_num = reading.count(" ")
+                headword_space_num = headword.count(" ")
 
-            entry = [
-                headword,  # Term
-                reading,  # Reading
-                "",  # Definition tags
-                "",  # Rules
-                0,  # Score
-                [{"type": "structured-content", "content": structured_content}],
-                sequence,  # Sequence
-                "",  # Term tags
-            ]
+                if reading_space_num != headword_space_num:
+                    raise ValueError(
+                        "Word Num Not Match!\n"
+                        f"Reading validation failed: '{reading}'"
+                        f"doesn't match headword '{headword}'\n"
+                    )
+
+                reading_words = reading.split(" ")
+                headword_words = headword.split(" ")
+
+                for i in range(len(reading_words)):
+                    if "ё" in reading_words[i]:
+                        headword_words[i] = reading_words[i]
+
+                headword = " ".join(headword_words)
+
+                norm_reading = normalize(reading)
+                norm_headword = normalize(headword)
+                reading_space_num = reading.count(" ")
+                headword_space_num = headword.count(" ")
+
+                if (
+                    norm_reading != norm_headword
+                    or reading_space_num != headword_space_num
+                ):
+                    raise ValueError(
+                        f"Reading validation failed: '{reading}'"
+                        f"doesn't match headword '{headword}'\n"
+                        f"norm_reading '{norm_reading}'\n"
+                        f"norm_headword '{norm_headword}'"
+                    )
+
+                # Build Yomitan entry with proper schema compliance
+                entry = [
+                    headword,  # Term
+                    reading,  # Reading
+                    "",  # Definition tags
+                    "",  # Rules
+                    0,  # Score
+                    [{"type": "structured-content", "content": structured_content}],
+                    sequence,  # Sequence
+                    "",  # Term tags
+                ]
+
+            except ValueError as e:
+                # Write the line_copy to test.txt when ValueError is raised
+                if debug:
+                    with open("test.txt", "a", encoding="utf-8") as f:
+                        f.write(line_copy)
+                # Re-raise the exception if you want to stop execution or handle it elsewhere
+                raise e
+
             entries.append(entry)
             sequence += 1
 
-    return entries
+        if readings_list:
+            if debug:
+                with open("test.txt", "a", encoding="utf-8") as f:
+                    f.write(line_copy)
+
+            for reading in readings_list:
+                print(reading)
+
+            raise ValueError("Readings not used up!")
+
+    return entries, reading_or_link_num, phrases_num
 
 
 # Example usage
 if __name__ == "__main__":
+    with open("test.txt", "r", encoding="utf-8") as f:
+        test_lines = f.readlines()
+
+    test_data, readings_num, phrases_num = convert_to_yomitan(test_lines, debug=False)
+
+    print(readings_num, phrases_num)
+
     with open("LingvoUniversalRuEn.txt", "r", encoding="utf-8") as f:
         input_lines = f.readlines()
 
-    yomitan_data = convert_to_yomitan(input_lines)
+    yomitan_data, readings_num, phrases_num = convert_to_yomitan(
+        input_lines, debug=True
+    )
+
+    print(readings_num, phrases_num)
 
     with open("term_bank_1.json", "w", encoding="utf-8") as f:
         json.dump(yomitan_data, f, ensure_ascii=False, indent=2)
