@@ -89,7 +89,12 @@ def clean_html_and_extract_readings(html_str):
     if not readings:
         # Get the first top-level block (e.g., <p>, <div>, etc.)
         first_block = next(
-            (child for child in soup.children if child.name is not None), None
+            (
+                child
+                for child in soup.children
+                if child.name not in [None, "object", "br"]
+            ),
+            None,
         )
 
         # Check if the first block is a <font> tag with color="green"
