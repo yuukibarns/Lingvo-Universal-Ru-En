@@ -40,7 +40,7 @@ def should_use_reading(text, reading_candidate):
         return False
 
     # Rule 2: Empty if headword has only one vowel (stress is unambiguous)
-    if vowels_in_headword <= 1:
+    if vowels_in_headword <= 1 and "ё" not in reading_candidate.lower():
         return False
 
     return True
